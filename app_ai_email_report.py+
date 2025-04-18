@@ -1,0 +1,93 @@
+import streamlit as st
+import fitz  # PyMuPDF
+import smtplib, ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from email.mime.text import MIMEText
+import openai
+import os
+
+openai.api_key = st.secrets["openai_key"]
+
+st.set_page_config(page_title="📧 Invio Report con AI", layout="wide")
+st.title("📧 Invio Report PDF con Anteprima e Chat AI")
+
+# --- Sezione 1: Caricamento PDF ---
+st.header("📂 Carica un PDF")
+uploaded_pdf = st.file_uploader("Scegli un file PDF", type="pdf")
+
+if uploaded_pdf is not None:
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_pdf.read())
+
+    st.success("✅ PDF caricato con successo!")
+
+    # --- Anteprima testo PDF ---
+    with fitz.open("temp.pdf") as doc:
+        pdf_text = ""
+        for page in doc:
+            pdf_text += page.get_text()
+
+    st.subheader("📝 Anteprima Testo PDF")
+    st.text_area("Contenuto del PDF", pdf_text, height=300)
+
+    # --- Sezione 2: Invio Email ---
+    st.header("📬 Invia Email con Allegato")
+    destinatario = st.text_input("✉️ Inserisci l'indirizzo email del destinatario")
+    corpo_email = st.text_area("📝 Messaggio", "In allegato trovi il report PDF richiesto.")
+
+    if st.button("📤 Invia Email"):
+        try:
+            mittente = "romanello.matteo87@gmail.com"
+            password = st.secrets["email_password"]
+
+            msg = MIMEMultipart()
+            msg["From"] = mittente
+            msg["To"] = destinatario
+            msg["Subject"] = "📊 Report Settimanale"
+            msg.attach(MIMEText(corpo_email, "plain"))
+
+            with open("temp.pdf", "rb") as f:
+                part = MIMEApplication(f.read(), _subtype="pdf")
+                part.add_header("Content-Disposition", "attachment", filename="report.pdf")
+                msg.attach(part)
+
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+                server.login(mittente, password)
+                server.send_message(msg)
+
+            st.success("✅ Email inviata con successo!")
+
+        except Exception as e:
+            st.error(f"❌ Errore durante l'invio: {e}")
+
+    # --- Sezione 3: Chat AI ---
+    st.header("🧠 Chat AI sul contenuto del report")
+
+    if 'messages' not in st.session_state:
+        st.session_state.messages = [
+            {"role": "system", "content": "Sei un assistente AI che risponde solo in base al report PDF fornito."},
+            {"role": "user", "content": f"""Ecco il contenuto del report:\n\n{pdf_text}\n\nRispondi solo con dati e analisi."""}
+        ]
+
+    user_input = st.text_input("Scrivi una domanda sul report")
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+        with st.spinner("💭 Sto pensando..."):
+            client = openai.OpenAI(api_key=st.secrets["openai_key"])
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=st.session_state.messages
+            )
+            reply = response.choices[0].message.content
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+
+    for msg in st.session_state.messages[2:]:
+        if msg["role"] == "user":
+            st.markdown(f"**Tu:** {msg['content']}")
+        else:
+            st.markdown(f"**AI:** {msg['content']}")
+
+else:
+    st.info("📥 Carica un PDF per iniziare.")
